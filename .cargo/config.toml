@@ -1,0 +1,3 @@
+[build]
+# Enable tokio_unstable to unlock tokio::task::Builder (named tasks, tokio-console visibility)
+rustflags = ["--cfg", "tokio_unstable"]

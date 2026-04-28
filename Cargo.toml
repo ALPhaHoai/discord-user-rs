@@ -1,0 +1,77 @@
+[package]
+name = "discord-user-rs"
+version = "0.1.2"
+edition = "2021"
+description = "Discord self-bot client library — user-token WebSocket gateway and REST API"
+license = "MIT"
+repository = "https://github.com/ALPhaHoai/discord-user-rs"
+homepage = "https://github.com/ALPhaHoai/discord-user-rs"
+documentation = "https://docs.rs/discord-user-rs"
+authors = ["ALPhaHoai"]
+readme = "README.md"
+keywords = ["discord", "self-bot", "websocket", "gateway"]
+categories = ["api-bindings", "asynchronous", "network-programming"]
+
+[lib]
+name = "discord_user"
+
+# ── Feature flags ─────────────────────────────────────────────────────────────
+[features]
+default = ["collector", "builder", "cache", "framework"]
+
+## Stream-based event collectors (MessageCollector, ReactionCollector, …).
+collector = ["dep:async-stream"]
+
+## Type-state builder helpers (CreateMessage<HasChannel>, etc.).
+builder = []
+
+## In-memory event-driven cache (guilds, users, messages) + CacheHttp trait.
+cache = []
+
+## Built-in command framework (prefix commands, before/after hooks).
+framework = []
+
+## Use SIMD-accelerated JSON parsing (simd-json) instead of serde_json for
+## gateway message deserialization.  Requires a CPU with AVX2 (most x86-64
+## CPUs from 2013+).  The public API is unchanged; the switch is internal.
+simd_json = ["dep:simd-json"]
+
+## Enable all optional features.
+full = ["collector", "builder", "cache", "framework"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.48.0", features = ["full", "tracing"] }
+futures = "0.3"
+
+# WebSocket
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "gzip"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_repr = "0.1"
+
+# Utilities
+bitflags = { version = "2.6", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+rand = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+thiserror = "1.0"
+url = "2.5"
+urlencoding = "2.1"
+base64 = "0.22"
+dashmap = "6.1.0"
+flate2 = "1.0"
+
+# Optional
+async-stream = { version = "0.3", optional = true }
+simd-json = { version = "0.13", optional = true, default-features = false, features = ["serde_impl"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio = { version = "1.48.0", features = ["full"] }
