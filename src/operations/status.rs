@@ -1,13 +1,44 @@
 //! Status operations for DiscordUser
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
     context::DiscordContext,
     error::{DiscordError, Result},
+    proto::PreloadedUserSettings,
     route::Route,
     types::*,
 };
+
+/// Parsed response from a `PATCH /users/@me/settings-proto/{type}` call.
+///
+/// Mirrors the body Discord's web client consumes: the server echoes the full
+/// authoritative `PreloadedUserSettings` proto plus an `out_of_date` flag set
+/// when the supplied `required_data_version` was stale and the patch was
+/// rejected (the local edit is silently dropped — the returned `settings` are
+/// the canonical state).
+#[derive(Debug, Clone)]
+pub struct SettingsProtoResponse {
+    /// True iff the server discarded the local edit because the
+    /// `required_data_version` we sent did not match the server's version. The
+    /// returned `settings` reflect the server's authoritative state.
+    pub out_of_date: bool,
+    /// Decoded `PreloadedUserSettings` proto. Only the `status` sub-message is
+    /// materialized; every other top-level field is intentionally skipped.
+    pub settings: PreloadedUserSettings,
+    /// The raw base64 settings string returned by Discord. Useful for cache
+    /// round-tripping and for follow-up PATCHes that need to preserve fields
+    /// our decoder ignores.
+    pub raw_settings_b64: String,
+}
+
+#[derive(Deserialize)]
+struct RawSettingsProtoResponse {
+    settings: String,
+    #[serde(default)]
+    out_of_date: bool,
+}
 
 /// Rich presence activity sent via the gateway Presence Update opcode (op 3).
 ///
@@ -93,7 +124,12 @@ pub trait StatusOps: DiscordContext {
     /// ```ignore
     /// user.set_custom_status(UserStatus::Online, Some("Working"), None).await?;
     /// ```
-    async fn set_custom_status(&self, status: UserStatus, custom_status_text: Option<&str>, expires_at_ms: Option<u64>) -> Result<()> {
+    async fn set_custom_status(
+        &self,
+        status: UserStatus,
+        custom_status_text: Option<&str>,
+        expires_at_ms: Option<u64>,
+    ) -> Result<SettingsProtoResponse> {
         use crate::proto::{CustomStatus, PreloadedUserSettings, StatusSettings};
 
         // Build WebSocket presence payload
@@ -145,13 +181,34 @@ pub trait StatusOps: DiscordContext {
             }
         }
 
+        // Discord's web client always emits show_current_game alongside a
+        // custom-status patch, so mirror that to keep the wire format aligned.
+        status_settings = status_settings.with_show_current_game(false);
+
+        if let Some(expires) = expires_at_ms {
+            status_settings = status_settings.with_status_expires_at(expires);
+        }
+
         let settings = PreloadedUserSettings::with_status(status_settings);
         let encoded = settings.to_base64();
 
-        // Persist via HTTP API
-        let _result: Value = self.http().patch(crate::route::Route::SettingsProto { version: 1 }, json!({ "settings": encoded })).await?;
+        // Persist via HTTP API. Discord echoes the full authoritative proto
+        // back; parse it so callers can refresh local state and see the
+        // `out_of_date` flag (set when the supplied `required_data_version`
+        // was stale and the patch was discarded).
+        let raw: RawSettingsProtoResponse = self
+            .http()
+            .patch(Route::SettingsProto { version: 1 }, json!({ "settings": encoded }))
+            .await?;
 
-        Ok(())
+        let settings = PreloadedUserSettings::from_base64(&raw.settings)
+            .map_err(|e| DiscordError::Other(format!("failed to decode settings-proto response: {e}")))?;
+
+        Ok(SettingsProtoResponse {
+            out_of_date: raw.out_of_date,
+            settings,
+            raw_settings_b64: raw.settings,
+        })
     }
 
     /// Clear the current custom status, reverting to the default Online state.
@@ -159,7 +216,7 @@ pub trait StatusOps: DiscordContext {
     /// # Errors
     /// Returns [`DiscordError::NotInitialized`] if the gateway is not
     /// connected.
-    async fn clear_custom_status(&self) -> Result<()> {
+    async fn clear_custom_status(&self) -> Result<SettingsProtoResponse> {
         self.set_custom_status(UserStatus::Online, None, None).await
     }
 
